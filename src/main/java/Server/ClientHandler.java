@@ -12,263 +12,244 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 public class ClientHandler implements Runnable {
-    private Socket socket;
-    private ObjectOutputStream oos;
-    private ObjectInputStream ois;
-    private DataOutputStream dos;
-    private DataInputStream dis;
-    private List<ClientHandler> allClients;
-    private String username;
-    private boolean isLoggedIn = false;
+    private Socket sock;
+    private ObjectOutputStream objOut;
+    private ObjectInputStream objIn;
+    private DataOutputStream dataOut;
+    private DataInputStream dataIn;
+    private List<ClientHandler> clientsList;
+    private String uname;
+    private boolean loggedIn = false;
 
-    private static final String SERVER_FILES_DIR = "resources/Server/";
+    private static final String S_DIR = "resources/Server/";
 
-    public ClientHandler(Socket socket, List<ClientHandler> allClients) {
-        this.socket = socket;
-        this.allClients = allClients;
+    public ClientHandler(Socket sock, List<ClientHandler> clientsList) {
+        this.sock = sock;
+        this.clientsList = clientsList;
         try {
-            this.oos = new ObjectOutputStream(socket.getOutputStream());
-            this.oos.flush();
-            this.ois = new ObjectInputStream(socket.getInputStream());
-            this.dos = new DataOutputStream(socket.getOutputStream());
-            this.dis = new DataInputStream(socket.getInputStream());
-            Files.createDirectories(Paths.get(SERVER_FILES_DIR)); // Ensure server directory exists
+            this.objOut = new ObjectOutputStream(sock.getOutputStream());
+            this.objOut.flush();
+            this.objIn = new ObjectInputStream(sock.getInputStream());
+            this.dataOut = new DataOutputStream(sock.getOutputStream());
+            this.dataIn = new DataInputStream(sock.getInputStream());
+            Files.createDirectories(Paths.get(S_DIR));
         } catch (IOException e) {
-            System.err.println("ClientHandler IO Exception during setup for " + socket.getInetAddress() + ": " + e.getMessage());
-            closeConnection();
+            System.err.println("ClientHandler IO Exception during setup: " + e.getMessage());
+            closeConn();
         }
     }
 
-    public String getUsername() {
-        return username;
-    }
+    public String getUname() { return uname; }
+    public boolean isLoggedIn() { return loggedIn; }
 
     @Override
     public void run() {
         try {
-            performLogin();
-
-            if (isLoggedIn) {
-                processClientMessages();
+            doLogin();
+            if (loggedIn) {
+                procCliMsgs();
             }
         } catch (SocketException e) {
-            System.out.println("Client " + getClientIdentifier() + " disconnected abruptly: " + e.getMessage());
+            System.out.println("Client " + getCliId() + " disconnected abruptly: " + e.getMessage());
         } catch (EOFException e) {
-            System.out.println("Client " + getClientIdentifier() + " closed the connection.");
+            System.out.println("Client " + getCliId() + " closed the connection.");
         } catch (IOException | ClassNotFoundException e) {
-            if (isLoggedIn) {
-                System.err.println("Error handling client " + username + ": " + e.getMessage());
-                e.printStackTrace();
+            if (loggedIn) {
+                System.err.println("Error handling client " + uname + ": " + e.getMessage());
             }
         } finally {
-            cleanupAfterDisconnect();
+            cleanup();
         }
     }
 
-    private void performLogin() throws IOException, ClassNotFoundException {
-        while (!isLoggedIn && !socket.isClosed()) {
-            Message loginMsg = (Message) ois.readObject();
+    private void doLogin() throws IOException, ClassNotFoundException {
+        while (!loggedIn && !sock.isClosed()) {
+            Message loginMsg = (Message) objIn.readObject();
             if (loginMsg.type == Message.LOGIN_REQUEST) {
-                handleLoginRequest(loginMsg);
+                procLoginReq(loginMsg);
             } else {
-                sendMessageToClient(new Message(Message.LOGIN_FAILURE, "Server", "Invalid request. Please login first."));
+                sendMsgToCli(new Message(Message.LOGIN_FAILURE, "Server", "Invalid request. Please login first."));
             }
         }
     }
 
-    private void processClientMessages() throws IOException, ClassNotFoundException {
-        while (isLoggedIn && !socket.isClosed()) {
-            Message clientMessage = (Message) ois.readObject();
-            handleMessage(clientMessage);
+    private void procCliMsgs() throws IOException, ClassNotFoundException {
+        while (loggedIn && !sock.isClosed()) {
+            Message cliMsg = (Message) objIn.readObject();
+            handleMsg(cliMsg);
         }
     }
 
-    private String getClientIdentifier() {
-        return username != null ? username : socket.getInetAddress().toString();
+    private String getCliId() {
+        return uname != null ? uname : sock.getInetAddress().toString();
     }
 
-    private void handleMessage(Message msg) throws IOException {
+    private void handleMsg(Message msg) throws IOException {
         switch (msg.type) {
-            case Message.CHAT_MESSAGE:
-                handleChatMessage(msg);
-                break;
-            case Message.FILE_UPLOAD_REQUEST_METADATA:
-                handleFileUploadRequest(msg);
-                break;
-            case Message.FILE_LIST_REQUEST:
-                handleFileListRequest();
-                break;
-            case Message.FILE_DOWNLOAD_REQUEST:
-                handleFileDownloadRequest(msg);
-                break;
-            case Message.CLIENT_DISCONNECT:
-                handleClientDisconnect();
-                break;
+            case Message.CHAT_MESSAGE: procChatMsg(msg); break;
+            case Message.FILE_UPLOAD_REQUEST_METADATA: procUploadReq(msg); break;
+            case Message.FILE_LIST_REQUEST: procFileListReq(); break;
+            case Message.FILE_DOWNLOAD_REQUEST: procDownloadReq(msg); break;
+            case Message.CLIENT_DISCONNECT: procCliDisconnect(); break;
             default:
-                System.out.println("Unknown message type " + msg.type + " from " + username);
-                sendMessageToClient(new Message(Message.GENERAL_SERVER_MESSAGE, "Server", "Unknown request type."));
+                System.out.println("Unknown message type " + msg.type + " from " + uname);
+                sendMsgToCli(new Message(Message.GENERAL_SERVER_MESSAGE, "Server", "Unknown request type."));
         }
     }
 
-    private void handleLoginRequest(Message loginMsg) throws IOException {
-        String[] credentials = loginMsg.content.split(":", 2);
-        if (credentials.length != 2) {
-            sendMessageToClient(new Message(Message.LOGIN_FAILURE, "Server", "Malformed login request."));
+    private void procLoginReq(Message loginMsg) throws IOException {
+        String[] creds = loginMsg.content.split(":", 2);
+        if (creds.length != 2) {
+            sendMsgToCli(new Message(Message.LOGIN_FAILURE, "Server", "Malformed login request."));
             return;
         }
+        String attemptUname = creds[0];
+        String attemptPass = creds[1];
 
-        String attemptUsername = credentials[0];
-        String attemptPassword = credentials[1];
-
-        synchronized (allClients) {
-            boolean userAlreadyActive = allClients.stream()
-                    .anyMatch(ch -> ch.isLoggedIn && ch.getUsername().equals(attemptUsername));
-            if (userAlreadyActive) {
-                sendMessageToClient(new Message(Message.LOGIN_FAILURE, "Server", "User " + attemptUsername + " is already logged in."));
+        synchronized (clientsList) {
+            if (clientsList.stream().anyMatch(ch -> ch.loggedIn && ch.getUname().equals(attemptUname))) {
+                sendMsgToCli(new Message(Message.LOGIN_FAILURE, "Server", "User " + attemptUname + " is already logged in."));
                 return;
             }
         }
 
-        if (Server.authenticate(attemptUsername, attemptPassword)) {
-            this.username = attemptUsername;
-            this.isLoggedIn = true;
-            synchronized (allClients) {
-                allClients.add(this);
-            }
-            sendMessageToClient(new Message(Message.LOGIN_SUCCESS, "Server", "Welcome " + username + "!"));
-            System.out.println(username + " logged in. Total clients: " + allClients.size());
-            broadcast(new Message(Message.USER_JOINED_NOTIFICATION, "Server", username + " has joined the chat."), this);
+        if (Server.authUser(attemptUname, attemptPass)) {
+            this.uname = attemptUname;
+            this.loggedIn = true;
+            Server.addCli(this);
+            sendMsgToCli(new Message(Message.LOGIN_SUCCESS, "Server", "Welcome " + uname + "!"));
+            System.out.println(uname + " logged in. Total clients: " + Server.clients.size());
+            bcast(new Message(Message.USER_JOINED_NOTIFICATION, "Server", uname + " has joined the chat."), this);
         } else {
-            sendMessageToClient(new Message(Message.LOGIN_FAILURE, "Server", "Invalid username or password."));
+            sendMsgToCli(new Message(Message.LOGIN_FAILURE, "Server", "Invalid username or password."));
         }
     }
 
-    private void handleChatMessage(Message msg) {
+    private void procChatMsg(Message msg) {
         System.out.println("Chat from " + msg.sender + ": " + msg.content);
-        broadcast(new Message(Message.CHAT_MESSAGE, this.username, msg.content), this);
+        bcast(new Message(Message.CHAT_MESSAGE, this.uname, msg.content), this);
     }
 
-    private void handleFileUploadRequest(Message msg) throws IOException {
-        System.out.println("File upload request from " + username + ": " + msg.content + " (" + msg.fileSize + " bytes)");
-        sendMessageToClient(new Message(Message.FILE_UPLOAD_READY_FOR_BYTES, "Server", msg.content)); // Acknowledge
-        receiveFileFromClient(msg.content, msg.fileSize);
+    private void procUploadReq(Message msg) throws IOException {
+        System.out.println("File upload request from " + uname + ": " + msg.content + " (" + msg.fileSize + " bytes)");
+        sendMsgToCli(new Message(Message.FILE_UPLOAD_READY_FOR_BYTES, "Server", msg.content));
+        recvFile(msg.content, msg.fileSize);
     }
 
-    private void handleFileListRequest() throws IOException {
-        System.out.println("File list request from " + username);
-        sendFileListToClient();
+    private void procFileListReq() throws IOException {
+        System.out.println("File list request from " + uname);
+        sendFileList();
     }
 
-    private void handleFileDownloadRequest(Message msg) throws IOException {
-        System.out.println("File download request from " + username + " for: " + msg.content);
-        sendFileToClient(msg.content);
+    private void procDownloadReq(Message msg) throws IOException {
+        System.out.println("File download request from " + uname + " for: " + msg.content);
+        sendFile(msg.content);
     }
 
-    private void handleClientDisconnect() {
-        System.out.println(username + " is disconnecting.");
-        isLoggedIn = false;
+    private void procCliDisconnect() {
+        System.out.println(uname + " is disconnecting.");
+        loggedIn = false;
     }
 
-    private void sendMessageToClient(Message msg) {
+    public void sendMsgToCli(Message msg) {
         try {
-            if (oos != null && !socket.isClosed()) {
-                oos.writeObject(msg);
-                oos.flush();
+            if (objOut != null && !sock.isClosed()) {
+                objOut.writeObject(msg);
+                objOut.flush();
             }
         } catch (IOException e) {
+            System.err.println("Error sending message to " + getCliId() + ": " + e.getMessage());
         }
     }
 
-    private void broadcast(Message msg, ClientHandler senderHandler) {
+    private void bcast(Message msg, ClientHandler sender) {
         System.out.println("Broadcasting: \"" + msg.content + "\" (from " + msg.sender + ")");
-        synchronized (allClients) {
-            for (ClientHandler client : allClients) {
-                if (client.isLoggedIn && client != senderHandler) {
-                    client.sendMessageToClient(msg);
+        synchronized (clientsList) {
+            for (ClientHandler cli : clientsList) {
+                if (cli.loggedIn && cli != sender) {
+                    cli.sendMsgToCli(msg);
                 }
             }
         }
     }
 
-    private void sendFileListToClient() throws IOException {
-        File dir = new File(SERVER_FILES_DIR);
-        String fileListStr = "";
+    private void sendFileList() throws IOException {
+        File dir = new File(S_DIR);
+        String fListStr = "";
         if (dir.exists() && dir.isDirectory()) {
             File[] files = dir.listFiles(f -> f.isFile());
             if (files != null) {
-                fileListStr = java.util.Arrays.stream(files)
+                fListStr = java.util.Arrays.stream(files)
                         .map(File::getName)
                         .collect(Collectors.joining(","));
             }
         } else {
-            Files.createDirectories(Paths.get(SERVER_FILES_DIR));
+            Files.createDirectories(Paths.get(S_DIR));
         }
-        sendMessageToClient(new Message(Message.FILE_LIST_RESPONSE, "Server", fileListStr));
+        sendMsgToCli(new Message(Message.FILE_LIST_RESPONSE, "Server", fListStr));
     }
 
-    private void sendFileToClient(String fileName) throws IOException {
-        Path filePath = Paths.get(SERVER_FILES_DIR, fileName);
-        if (!Files.exists(filePath) || !Files.isReadable(filePath)) {
-            sendMessageToClient(new Message(Message.FILE_DOWNLOAD_ERROR, "Server", "File not found or not accessible: " + fileName));
+    private void sendFile(String fname) throws IOException {
+        Path fPath = Paths.get(S_DIR, fname);
+        if (!Files.exists(fPath) || !Files.isReadable(fPath)) {
+            sendMsgToCli(new Message(Message.FILE_DOWNLOAD_ERROR, "Server", "File not found: " + fname));
             return;
         }
-
-        long fileSize = Files.size(filePath);
-        sendMessageToClient(new Message(Message.FILE_DOWNLOAD_INFO_AND_START, "Server", fileName, fileSize));
-        sendMessageToClient(new Message(Message.FILE_DOWNLOAD_SENDING_BYTES, "Server", fileName)); // Signal start of byte stream
-
-        try (InputStream fileIs = Files.newInputStream(filePath)) {
-            byte[] buffer = new byte[8192];
+        long fSize = Files.size(fPath);
+        sendMsgToCli(new Message(Message.FILE_DOWNLOAD_INFO_AND_START, "Server", fname, fSize));
+        sendMsgToCli(new Message(Message.FILE_DOWNLOAD_SENDING_BYTES, "Server", fname));
+        try (InputStream fIs = Files.newInputStream(fPath)) {
+            byte[] buf = new byte[8192];
             int bytesRead;
-            while ((bytesRead = fileIs.read(buffer)) != -1) {
-                dos.write(buffer, 0, bytesRead);
+            while ((bytesRead = fIs.read(buf)) != -1) {
+                dataOut.write(buf, 0, bytesRead);
             }
-            dos.flush();
+            dataOut.flush();
         }
-        System.out.println("File " + fileName + " (" + fileSize + " bytes) sent to " + username);
+        System.out.println("File " + fname + " (" + fSize + " bytes) sent to " + uname);
     }
 
-    private void receiveFileFromClient(String filename, long fileLength) throws IOException {
-        Path outputPath = Paths.get(SERVER_FILES_DIR, filename);
-        try (OutputStream fileOs = Files.newOutputStream(outputPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-            byte[] buffer = new byte[8192];
-            long bytesReceived = 0;
-            int currentBytesRead;
-
-            while (bytesReceived < fileLength) {
-                int toRead = (int) Math.min(buffer.length, fileLength - bytesReceived);
-                currentBytesRead = dis.read(buffer, 0, toRead);
-                if (currentBytesRead == -1) {
-                    throw new EOFException("Connection closed by client during file upload of " + filename);
-                }
-                fileOs.write(buffer, 0, currentBytesRead);
-                bytesReceived += currentBytesRead;
+    private void recvFile(String fname, long fLen) throws IOException {
+        Path outPath = Paths.get(S_DIR, fname);
+        try (OutputStream fOs = Files.newOutputStream(outPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            byte[] buf = new byte[8192];
+            long bytesRecvd = 0;
+            int curBytesRead;
+            while (bytesRecvd < fLen) {
+                int toRead = (int) Math.min(buf.length, fLen - bytesRecvd);
+                curBytesRead = dataIn.read(buf, 0, toRead);
+                if (curBytesRead == -1) throw new EOFException("Client closed connection during file upload.");
+                fOs.write(buf, 0, curBytesRead);
+                bytesRecvd += curBytesRead;
             }
-            fileOs.flush();
-            System.out.println("File " + filename + " (" + fileLength + " bytes) received from " + username + " and saved.");
-            sendMessageToClient(new Message(Message.FILE_UPLOAD_CONFIRMATION, "Server", "File '" + filename + "' uploaded successfully."));
+            fOs.flush();
+            System.out.println("File " + fname + " received from " + uname + " and saved.");
+            sendMsgToCli(new Message(Message.FILE_UPLOAD_CONFIRMATION, "Server", "File '" + fname + "' uploaded successfully."));
         } catch (IOException e) {
-            try { Files.deleteIfExists(outputPath); } catch (IOException ignored) {} // Attempt to delete partial file
+            System.err.println("Error receiving file " + fname + ": " + e.getMessage());
+            sendMsgToCli(new Message(Message.FILE_UPLOAD_CONFIRMATION, "Server", "File upload failed for '" + fname + "'."));
+            try { Files.deleteIfExists(outPath); } catch (IOException ignored) {}
         }
     }
 
-    private void cleanupAfterDisconnect() {
-        if (isLoggedIn) {
-            Server.removeClient(this);
+    private void cleanup() {
+        if (loggedIn) {
+            bcast(new Message(Message.USER_LEFT_NOTIFICATION, "Server", uname + " has left the chat."), this);
         }
-        closeConnection();
+        Server.remCli(this);
+        closeConn();
     }
 
-    private void closeConnection() {
+    private void closeConn() {
         try {
-            if (ois != null) ois.close();
-            if (oos != null) oos.close();
-            if (dis != null) dis.close();
-            if (dos != null) dos.close();
-            if (socket != null && !socket.isClosed()) socket.close();
+            if (objIn != null) objIn.close();
+            if (objOut != null) objOut.close();
+            if (dataIn != null) dataIn.close();
+            if (dataOut != null) dataOut.close();
+            if (sock != null && !sock.isClosed()) sock.close();
         } catch (IOException e) {
-
+            System.err.println("Error closing connection for " + getCliId() + ": " + e.getMessage());
         }
-        System.out.println("Connection closed for " + getClientIdentifier());
+        System.out.println("Connection closed for " + getCliId());
     }
 }

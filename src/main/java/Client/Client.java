@@ -40,13 +40,16 @@ public class Client {
 
 
 
-            System.out.println("===== Welcome to CS Music Room =====");
+            System.out.println("== Welcome to Room ==");
             while (!loggedIn && running) {
-                System.out.print("Username: ");
+                System.out.print("Username:\n " +
+                        "(use user1(1-5))");
                 String inputUsername = scanner.nextLine().trim();
                 if (inputUsername.isEmpty()) continue;
 
-                System.out.print("Password: ");
+                System.out.print("Password: \n" +
+                        "(1234)")
+                ;
                 String password = scanner.nextLine().trim();
                 if (password.isEmpty()) continue;
 
@@ -68,7 +71,7 @@ public class Client {
                     }
                 } catch (ClassNotFoundException e) {
                     System.err.println("Error reading login response: " + e.getMessage());
-                    running = false; // Stop if critical error
+                    running = false;
                 } catch (EOFException | SocketException e) {
                     System.err.println("Disconnected from server during login. Exiting.");
                     running = false;
@@ -189,7 +192,7 @@ public class Client {
                 System.out.println("Upload cancelled.");
                 return;
             }
-            choice--; // Adjust to 0-based index
+            choice--;
         } catch (NumberFormatException e) {
             System.out.println("Invalid input. Please enter a number.");
             return;
@@ -205,7 +208,6 @@ public class Client {
         long fileSize = selectedFile.length();
 
         try {
-            // 1. Send metadata
             System.out.println("Requesting to upload " + fileName + " (" + fileSize + " bytes)...");
             sendMessageToServer(new Message(Message.FILE_UPLOAD_REQUEST_METADATA, username, fileName, fileSize));
 

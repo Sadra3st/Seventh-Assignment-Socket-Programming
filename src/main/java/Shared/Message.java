@@ -5,7 +5,6 @@ import java.io.Serializable;
 public class Message implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    // Message types
     public static final int LOGIN_REQUEST = 0;
     public static final int LOGIN_SUCCESS = 1;
     public static final int LOGIN_FAILURE = 2;
@@ -22,13 +21,15 @@ public class Message implements Serializable {
     public static final int GENERAL_SERVER_MESSAGE = 13;
     public static final int FILE_DOWNLOAD_ERROR = 14;
     public static final int FILE_UPLOAD_READY_FOR_BYTES = 15;
-    public static final int FILE_DOWNLOAD_SENDING_BYTES = 16; // Server sending bytes
+    public static final int FILE_DOWNLOAD_SENDING_BYTES = 16;
+    public static final int USER_LIST_UPDATE = 17;
 
 
     public int type;
     public String sender;
     public String content;
     public long fileSize;
+    public Object payload;
 
     public Message(int type, String sender, String content) {
         this.type = type;
@@ -38,10 +39,14 @@ public class Message implements Serializable {
     }
 
     public Message(int type, String sender, String content, long fileSize) {
+        this(type, sender, content);
+        this.fileSize = fileSize;
+    }
+    public Message(int type, String sender, Object payload) {
         this.type = type;
         this.sender = sender;
-        this.content = content;
-        this.fileSize = fileSize;
+        this.payload = payload;
+        this.fileSize = -1;
     }
 
     public Message() {}
@@ -53,6 +58,7 @@ public class Message implements Serializable {
                 ", sender='" + sender + '\'' +
                 ", content='" + content + '\'' +
                 ", fileSize=" + fileSize +
+                ", payload=" + payload +
                 '}';
     }
 }
