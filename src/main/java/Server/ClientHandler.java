@@ -52,10 +52,12 @@ public class ClientHandler implements Runnable {
         } catch (SocketException e) {
             System.out.println("Client " + getCliId() + " disconnected abruptly: " + e.getMessage());
         } catch (EOFException e) {
-            System.out.println("Client " + getCliId() + " closed the connection.");
+            System.out.println("Client " + getCliId() + " closed the connection (EOF in run).");
         } catch (IOException | ClassNotFoundException e) {
             if (loggedIn) {
                 System.err.println("Error handling client " + uname + ": " + e.getMessage());
+            } else {
+                System.err.println("Error with unauthenticated client " + getCliId() + ": " + e.getMessage());
             }
         } finally {
             cleanup();
@@ -63,13 +65,17 @@ public class ClientHandler implements Runnable {
     }
 
     private void doLogin() throws IOException, ClassNotFoundException {
-        while (!loggedIn && !sock.isClosed()) {
+        if (sock.isClosed()) return;
+
+        try {
             Message loginMsg = (Message) objIn.readObject();
             if (loginMsg.type == Message.LOGIN_REQUEST) {
                 procLoginReq(loginMsg);
             } else {
-                sendMsgToCli(new Message(Message.LOGIN_FAILURE, "Server", "Invalid request. Please login first."));
+                sendMsgToCli(new Message(Message.LOGIN_FAILURE, "Server", "Invalid request type. Expected LOGIN_REQUEST."));
             }
+        } catch (EOFException e) {
+            System.out.println("Client " + getCliId() + " closed connection before sending login request.");
         }
     }
 
@@ -100,7 +106,9 @@ public class ClientHandler implements Runnable {
     private void procLoginReq(Message loginMsg) throws IOException {
         String[] creds = loginMsg.content.split(":", 2);
         if (creds.length != 2) {
-            sendMsgToCli(new Message(Message.LOGIN_FAILURE, "Server", "Malformed login request."));
+            Message failMsg = new Message(Message.LOGIN_FAILURE, "Server", "Malformed login request.");
+            System.out.println("[SERVER DEBUG] Sending LOGIN_FAILURE. Type: " + failMsg.type + ", Sender: " + failMsg.sender + ", Content: '" + failMsg.content + "'");
+            sendMsgToCli(failMsg);
             return;
         }
         String attemptUname = creds[0];
@@ -108,20 +116,29 @@ public class ClientHandler implements Runnable {
 
         synchronized (clientsList) {
             if (clientsList.stream().anyMatch(ch -> ch.loggedIn && ch.getUname().equals(attemptUname))) {
-                sendMsgToCli(new Message(Message.LOGIN_FAILURE, "Server", "User " + attemptUname + " is already logged in."));
+                Message failMsg = new Message(Message.LOGIN_FAILURE, "Server", "User " + attemptUname + " is already logged in.");
+                System.out.println("[SERVER DEBUG] Sending LOGIN_FAILURE. Type: " + failMsg.type + ", Sender: " + failMsg.sender + ", Content: '" + failMsg.content + "'");
+                sendMsgToCli(failMsg);
                 return;
             }
         }
 
         if (Server.authUser(attemptUname, attemptPass)) {
             this.uname = attemptUname;
+
+            Message successMsg = new Message(Message.LOGIN_SUCCESS, "Server", "Welcome " + uname + "!");
+            System.out.println("[SERVER DEBUG] Sending LOGIN_SUCCESS. Type: " + successMsg.type + ", Sender: " + successMsg.sender + ", Content: '" + successMsg.content + "'");
+            sendMsgToCli(successMsg);
+
             this.loggedIn = true;
             Server.addCli(this);
-            sendMsgToCli(new Message(Message.LOGIN_SUCCESS, "Server", "Welcome " + uname + "!"));
+
             System.out.println(uname + " logged in. Total clients: " + Server.clients.size());
             bcast(new Message(Message.USER_JOINED_NOTIFICATION, "Server", uname + " has joined the chat."), this);
         } else {
-            sendMsgToCli(new Message(Message.LOGIN_FAILURE, "Server", "Invalid username or password."));
+            Message failMsg = new Message(Message.LOGIN_FAILURE, "Server", "Invalid username or password.");
+            System.out.println("[SERVER DEBUG] Sending LOGIN_FAILURE. Type: " + failMsg.type + ", Sender: " + failMsg.sender + ", Content: '" + failMsg.content + "'");
+            sendMsgToCli(failMsg);
         }
     }
 

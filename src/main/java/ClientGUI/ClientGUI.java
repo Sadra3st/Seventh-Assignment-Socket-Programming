@@ -8,7 +8,9 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.*;
 import java.net.Socket;
+import java.net.SocketException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public class ClientGUI extends JFrame {
@@ -181,16 +183,40 @@ public class ClientGUI extends JFrame {
                         loginStatusLbl.setText(" ");
                         passFld.setText("");
                     });
-                } else {
+                } else { // LOGIN_FAILURE
                     SwingUtilities.invokeLater(() -> {
-                        loginStatusLbl.setText("Login failed: " + resp.content);
+                        loginStatusLbl.setText("Login failed: " + (resp.content != null ? resp.content : "No additional info."));
                         loginBtn.setEnabled(true);
                         closeRes();
                     });
                 }
-            } catch (Exception ex) {
+            } catch (EOFException eofEx) {
                 SwingUtilities.invokeLater(() -> {
-                    loginStatusLbl.setText("Connection error: " + ex.getMessage());
+                    loginStatusLbl.setText("Connection error: Server closed connection (EOF).");
+                    loginBtn.setEnabled(true);
+                    closeRes();
+                });
+                eofEx.printStackTrace();
+            } catch (SocketException sockEx) {
+                SwingUtilities.invokeLater(() -> {
+                    loginStatusLbl.setText("Connection error: Socket issue (" + (sockEx.getMessage() != null ? sockEx.getMessage() : "N/A") + ").");
+                    loginBtn.setEnabled(true);
+                    closeRes();
+                });
+                sockEx.printStackTrace();
+            } catch (ClassNotFoundException cnfEx) {
+                SwingUtilities.invokeLater(() -> {
+                    loginStatusLbl.setText("Error: Class not found (" + (cnfEx.getMessage() != null ? cnfEx.getMessage() : "N/A") + ").");
+                    loginBtn.setEnabled(true);
+                    closeRes();
+                });
+                cnfEx.printStackTrace();
+            }
+            catch (Exception ex) {
+                String errorMsg = ex.getMessage();
+                String displayText = "Connection error: " + (errorMsg != null ? errorMsg : "Unknown (null message)");
+                SwingUtilities.invokeLater(() -> {
+                    loginStatusLbl.setText(displayText);
                     loginBtn.setEnabled(true);
                     closeRes();
                 });
@@ -271,6 +297,9 @@ public class ClientGUI extends JFrame {
                     objOut.writeObject(new Message(Message.FILE_DOWNLOAD_REQUEST, uname, fname));
                     objOut.flush();
                     if(worker != null) {
+                        // Worker needs to know the expected file size from FILE_DOWNLOAD_INFO_AND_START
+                        // This part requires ClientWorker to store the size when INFO_AND_START is received.
+                        // For now, we pass the path and original name. Worker will use its stored size.
                         worker.setDlFile(saveFile.toPath(), fname);
                     }
 
@@ -300,7 +329,7 @@ public class ClientGUI extends JFrame {
     }
 
     private void doLogoutOrExit() {
-        if (objOut != null) {
+        if (objOut != null && uname != null) { // Check uname to ensure we were logged in
             try {
                 objOut.writeObject(new Message(Message.CLIENT_DISCONNECT, uname, "User logging out."));
                 objOut.flush();
@@ -317,11 +346,11 @@ public class ClientGUI extends JFrame {
     }
 
     private void closeRes() {
-        try { if (objIn != null) objIn.close(); } catch (IOException e) { e.printStackTrace(); }
-        try { if (objOut != null) objOut.close(); } catch (IOException e) { e.printStackTrace(); }
-        try { if (dataIn != null) dataIn.close(); } catch (IOException e) { e.printStackTrace(); }
-        try { if (dataOut != null) dataOut.close(); } catch (IOException e) { e.printStackTrace(); }
-        try { if (sock != null && !sock.isClosed()) sock.close(); } catch (IOException e) { e.printStackTrace(); }
+        try { if (objIn != null) objIn.close(); } catch (IOException e) { /* e.printStackTrace(); */ }
+        try { if (objOut != null) objOut.close(); } catch (IOException e) { /* e.printStackTrace(); */ }
+        try { if (dataIn != null) dataIn.close(); } catch (IOException e) { /* e.printStackTrace(); */ }
+        try { if (dataOut != null) dataOut.close(); } catch (IOException e) { /* e.printStackTrace(); */ }
+        try { if (sock != null && !sock.isClosed()) sock.close(); } catch (IOException e) { /* e.printStackTrace(); */ }
         objOut = null; objIn = null; dataOut = null; dataIn = null; sock = null;
     }
 

@@ -65,10 +65,10 @@ public class ClientReceiver implements Runnable {
     }
 
     private void processServerMessage(Message msg) throws IOException {
-        String prefix = inChatMode ? "" : "[" + msg.sender + " ("+msg.type+")]: "; // Added type for clarity
+        String prefix = inChatMode ? "" : "[" + msg.sender + " ("+msg.type+")]: ";
         switch (msg.type) {
             case Message.CHAT_MESSAGE:
-                if (!msg.sender.equals(this.clientUsername)) { // Don't print own echoed messages
+                if (!msg.sender.equals(this.clientUsername)) {
                     System.out.println((inChatMode ? "" : "[" + msg.sender + "]: ") + msg.content);
                 }
                 break;
@@ -149,12 +149,12 @@ public class ClientReceiver implements Runnable {
         System.out.println("\n[Receiver] Starting download of " + fileName + " (" + fileSize + " bytes) to " + outputPath);
 
         try (OutputStream fileOs = Files.newOutputStream(outputPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-            byte[] buffer = new byte[8192]; // 8KB buffer
+            byte[] buffer = new byte[8192];
             long bytesReceived = 0;
             int bytesReadCount;
 
             while (bytesReceived < fileSize) {
-                if (!running) { // Check if client is shutting down
+                if (!running) {
                     System.out.println("\n[Receiver] Download interrupted due to client shutdown.");
                     throw new IOException("Client shutdown during file download.");
                 }
